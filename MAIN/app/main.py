@@ -8,6 +8,9 @@ from app.config import settings
 from app.database import ping_database
 from app.routers import users
 from app.routers import categories
+from app.routers import requests
+from app.routers import comments
+from app.routers import attachments
 
 # Create the FastAPI app instance
 app = FastAPI(title=settings.APP_NAME)
@@ -15,7 +18,9 @@ app = FastAPI(title=settings.APP_NAME)
 # Register the users router
 app.include_router(users.router)
 app.include_router(categories.router)
-
+app.include_router(requests.router)
+app.include_router(comments.router)
+app.include_router(attachments.router)
 
 # Check the database connection when the server starts
 @app.on_event("startup")

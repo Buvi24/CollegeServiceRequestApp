@@ -1,32 +1,48 @@
-
 # app/routers/requests.py
 #
 # Purpose:
-#   HTTP endpoints for the ServiceRequest entity.
+#   HTTP endpoints for the Service Request entity.
 #
-# Endpoints:
-#   GET    /requests                  -> List all service requests
-#   GET    /requests/{id}             -> Get one service request
+#   GET    /requests                  -> List requests with filters
+#   GET    /requests/{request_id}     -> Get one request
 #   POST   /requests                  -> Create a service request
-#   PUT    /requests/{id}             -> Update request details
-#   PATCH  /requests/{id}/assign      -> Assign or reassign service staff
-#   PATCH  /requests/{id}/status      -> Update request status
-#   DELETE /requests/{id}             -> Delete a service request
+#   PUT    /requests/{request_id}     -> Update request details
+#   PUT    /requests/{request_id}/assign -> Assign request to staff
+#   PATCH  /requests/{request_id}/status -> Update request status
+#   DELETE /requests/{request_id}     -> Delete a request
+#
+#   Audit logs are automatically created for request creation,
+#   assignment, and status changes.
 
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
 from pymongo.collection import Collection
 
 from app.dependencies import (
     get_service_requests_collection,
     get_service_categories_collection,
     get_users_collection,
+    get_audit_logs_collection,
 )
 
-from app.models.request import RequestStatus, is_valid_transition
+from app.models.request import (
+    RequestStatus,
+    is_valid_transition,
+)
+
+from app.models.audit_log import (
+    AuditAction,
+    build_audit_log_doc,
+)
 
 from app.schemas.request import (
     RequestCreate,
@@ -39,19 +55,42 @@ from app.schemas.request import (
 
 router = APIRouter(
     prefix="/requests",
-    tags=["Service Requests"]
+    tags=["Service Requests"],
 )
 
 
-# --------------------------------------------------
-# Create a new service request
+# ---------------------------------------------------------
+# Helper function: Check if service request exists
+# ---------------------------------------------------------
+
+def _get_request_or_404(
+    request_id: str,
+    requests_collection: Collection,
+) -> dict:
+    """Find a service request or return HTTP 404."""
+
+    request_doc = requests_collection.find_one(
+        {"id": request_id}
+    )
+
+    if not request_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service request not found",
+        )
+
+    return request_doc
+
+
+# ---------------------------------------------------------
 # POST /requests
-# --------------------------------------------------
+# Create a new service request
+# ---------------------------------------------------------
 
 @router.post(
     "",
     response_model=RequestResponse,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
 def create_request(
     payload: RequestCreate,
@@ -64,29 +103,28 @@ def create_request(
     users_collection: Collection = Depends(
         get_users_collection
     ),
+    audit_logs_collection: Collection = Depends(
+        get_audit_logs_collection
+    ),
 ):
-    """
-    Create a new college service request.
+    """Create a new service request."""
 
-    Every new request starts with NEW status and no assigned staff.
-    """
-
-    # Check whether the service category exists
+    # Check whether the category exists
     if not categories_collection.find_one(
         {"id": payload.category_id}
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="category_id does not match any existing service category."
+            detail="category_id does not match any existing service category.",
         )
 
-    # Check whether the requesting student or faculty exists
+    # Check whether the creator exists
     if not users_collection.find_one(
         {"id": payload.created_by}
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="created_by does not match any existing user."
+            detail="created_by does not match any existing user.",
         )
 
     now = datetime.utcnow()
@@ -105,40 +143,98 @@ def create_request(
 
     requests_collection.insert_one(request_doc)
 
+    # Record creation in the audit trail
+    audit_logs_collection.insert_one(
+        build_audit_log_doc(
+            request_id=request_doc["id"],
+            action=AuditAction.CREATED,
+            performed_by=payload.created_by,
+            details=(
+                f"Service request created with status "
+                f"'{RequestStatus.NEW.value}'."
+            ),
+        )
+    )
+
     return request_doc
 
 
-# --------------------------------------------------
-# List all service requests
+# ---------------------------------------------------------
 # GET /requests
-# --------------------------------------------------
+# List requests with filtering and pagination
+# ---------------------------------------------------------
 
 @router.get(
     "",
-    response_model=List[RequestResponse]
+    response_model=List[RequestResponse],
 )
 def list_requests(
     requests_collection: Collection = Depends(
         get_service_requests_collection
     ),
+    status_filter: Optional[RequestStatus] = Query(
+        default=None,
+        alias="status",
+        description="Filter by request status",
+    ),
+    category_id: Optional[str] = Query(
+        default=None,
+        description="Filter by service category ID",
+    ),
+    assigned_to: Optional[str] = Query(
+        default=None,
+        description="Filter by assigned staff user ID",
+    ),
+    created_by: Optional[str] = Query(
+        default=None,
+        description="Filter by the user who created the request",
+    ),
+    skip: int = Query(
+        default=0,
+        ge=0,
+        description="Number of requests to skip",
+    ),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of requests to return",
+    ),
 ):
-    """
-    Retrieve all service requests.
-    """
+    """List service requests with optional filters and pagination."""
 
-    return list(
-        requests_collection.find({}, {"_id": 0})
+    mongo_filter = {}
+
+    if status_filter is not None:
+        mongo_filter["status"] = status_filter.value
+
+    if category_id is not None:
+        mongo_filter["category_id"] = category_id
+
+    if assigned_to is not None:
+        mongo_filter["assigned_to"] = assigned_to
+
+    if created_by is not None:
+        mongo_filter["created_by"] = created_by
+
+    cursor = (
+        requests_collection.find(mongo_filter)
+        .sort("created_at", -1)
+        .skip(skip)
+        .limit(limit)
     )
 
+    return list(cursor)
 
-# --------------------------------------------------
-# Get a service request by ID
+
+# ---------------------------------------------------------
 # GET /requests/{request_id}
-# --------------------------------------------------
+# Get one service request
+# ---------------------------------------------------------
 
 @router.get(
     "/{request_id}",
-    response_model=RequestResponse
+    response_model=RequestResponse,
 )
 def get_request(
     request_id: str,
@@ -146,32 +242,22 @@ def get_request(
         get_service_requests_collection
     ),
 ):
-    """
-    Retrieve a single service request using its ID.
-    """
+    """Retrieve a service request by its ID."""
 
-    request_doc = requests_collection.find_one(
-        {"id": request_id},
-        {"_id": 0}
+    return _get_request_or_404(
+        request_id,
+        requests_collection,
     )
 
-    if not request_doc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service request not found."
-        )
 
-    return request_doc
-
-
-# --------------------------------------------------
-# Update service request details
+# ---------------------------------------------------------
 # PUT /requests/{request_id}
-# --------------------------------------------------
+# Update request details
+# ---------------------------------------------------------
 
 @router.put(
     "/{request_id}",
-    response_model=RequestResponse
+    response_model=RequestResponse,
 )
 def update_request(
     request_id: str,
@@ -183,64 +269,51 @@ def update_request(
         get_service_categories_collection
     ),
 ):
-    """
-    Update request details such as title, description,
-    or service category.
+    """Update service request details."""
 
-    Status and assignment are handled separately.
-    """
-
-    existing = requests_collection.find_one(
-        {"id": request_id}
+    existing = _get_request_or_404(
+        request_id,
+        requests_collection,
     )
 
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service request not found."
-        )
-
     update_data = payload.model_dump(
-        exclude_unset=True
+        exclude_unset=True,
+        exclude_none=True,
     )
 
     if not update_data:
-        existing.pop("_id", None)
         return existing
 
-    # Validate the category if it is being changed
-    if (
-        "category_id" in update_data
-        and not categories_collection.find_one(
+    # Verify the new category if one is provided
+    if "category_id" in update_data:
+        if not categories_collection.find_one(
             {"id": update_data["category_id"]}
-        )
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="category_id does not match any existing service category."
-        )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="category_id does not match any existing service category.",
+            )
 
     update_data["updated_at"] = datetime.utcnow()
 
     requests_collection.update_one(
         {"id": request_id},
-        {"$set": update_data}
+        {"$set": update_data},
     )
 
     return requests_collection.find_one(
-        {"id": request_id},
-        {"_id": 0}
+        {"id": request_id}
     )
 
 
-# --------------------------------------------------
-# Assign or reassign service staff
-# PATCH /requests/{request_id}/assign
-# --------------------------------------------------
+# ---------------------------------------------------------
+# PUT /requests/{request_id}/assign
+# Assign or reassign request to staff
+# ---------------------------------------------------------
 
-@router.patch(
+@router.put(
     "/{request_id}/assign",
-    response_model=RequestResponse
+    response_model=RequestResponse,
 )
 def assign_request(
     request_id: str,
@@ -251,70 +324,97 @@ def assign_request(
     users_collection: Collection = Depends(
         get_users_collection
     ),
+    audit_logs_collection: Collection = Depends(
+        get_audit_logs_collection
+    ),
 ):
-    """
-    Assign or reassign service staff to a service request.
+    """Assign or reassign a service request to staff."""
 
-    When a NEW request is assigned, its status becomes ASSIGNED.
-    Reassignment does not reset the current status.
-    """
-
-    existing = requests_collection.find_one(
-        {"id": request_id}
+    existing = _get_request_or_404(
+        request_id,
+        requests_collection,
     )
 
-    if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service request not found."
-        )
-
-    # Check whether the assigned staff member exists
-    staff = users_collection.find_one(
+    # Check that the assigned user exists
+    assigned_user = users_collection.find_one(
         {"id": payload.assigned_to}
     )
 
-    if not staff:
+    if not assigned_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="assigned_to does not match any existing user."
+            detail="assigned_to does not match any existing user.",
         )
 
-    # Ensure only service staff can be assigned
-    if staff.get("role") != "service_staff":
+    # Check that the assigned user is service staff
+    if assigned_user.get("role") != "service_staff":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The assigned user must have the service_staff role."
+            detail="The assigned user must have the service_staff role.",
         )
+
+    # Check that the person performing the assignment exists
+    if not users_collection.find_one(
+        {"id": payload.assigned_by}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="assigned_by does not match any existing user.",
+        )
+
+    now = datetime.utcnow()
 
     update_data = {
         "assigned_to": payload.assigned_to,
-        "updated_at": datetime.utcnow(),
+        "updated_at": now,
     }
 
-    # Move a NEW request to ASSIGNED
-    if existing["status"] == RequestStatus.NEW.value:
+    status_also_changed = (
+        existing["status"] == RequestStatus.NEW.value
+    )
+
+    if status_also_changed:
         update_data["status"] = RequestStatus.ASSIGNED.value
 
     requests_collection.update_one(
         {"id": request_id},
-        {"$set": update_data}
+        {"$set": update_data},
+    )
+
+    # Record assignment in the audit trail
+    details = (
+        f"Assigned to user '{payload.assigned_to}'."
+    )
+
+    if status_also_changed:
+        details += (
+            f" Status moved from "
+            f"'{RequestStatus.NEW.value}' to "
+            f"'{RequestStatus.ASSIGNED.value}'."
+        )
+
+    audit_logs_collection.insert_one(
+        build_audit_log_doc(
+            request_id=request_id,
+            action=AuditAction.ASSIGNED,
+            performed_by=payload.assigned_by,
+            details=details,
+        )
     )
 
     return requests_collection.find_one(
-        {"id": request_id},
-        {"_id": 0}
+        {"id": request_id}
     )
 
 
-# --------------------------------------------------
-# Update service request status
+# ---------------------------------------------------------
 # PATCH /requests/{request_id}/status
-# --------------------------------------------------
+# Update service request status
+# ---------------------------------------------------------
 
 @router.patch(
     "/{request_id}/status",
-    response_model=RequestResponse
+    response_model=RequestResponse,
 )
 def update_request_status(
     request_id: str,
@@ -322,21 +422,27 @@ def update_request_status(
     requests_collection: Collection = Depends(
         get_service_requests_collection
     ),
+    users_collection: Collection = Depends(
+        get_users_collection
+    ),
+    audit_logs_collection: Collection = Depends(
+        get_audit_logs_collection
+    ),
 ):
-    """
-    Update the status of a service request.
+    """Change the status of a service request."""
 
-    Valid transitions are defined in app/models/request.py.
-    """
-
-    existing = requests_collection.find_one(
-        {"id": request_id}
+    existing = _get_request_or_404(
+        request_id,
+        requests_collection,
     )
 
-    if not existing:
+    # Check whether the user performing the change exists
+    if not users_collection.find_one(
+        {"id": payload.changed_by}
+    ):
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service request not found."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="changed_by does not match any existing user.",
         )
 
     current_status = RequestStatus(
@@ -345,18 +451,18 @@ def update_request_status(
 
     new_status = payload.status
 
-    # Validate the requested status transition
+    # Validate the status transition
     if not is_valid_transition(
         current_status,
-        new_status
+        new_status,
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Cannot move request from "
+                f"Invalid status transition from "
                 f"'{current_status.value}' to "
                 f"'{new_status.value}'."
-            )
+            ),
         )
 
     requests_collection.update_one(
@@ -366,23 +472,36 @@ def update_request_status(
                 "status": new_status.value,
                 "updated_at": datetime.utcnow(),
             }
-        }
+        },
+    )
+
+    # Record the status change in the audit trail
+    audit_logs_collection.insert_one(
+        build_audit_log_doc(
+            request_id=request_id,
+            action=AuditAction.STATUS_CHANGED,
+            performed_by=payload.changed_by,
+            details=(
+                f"Status changed from "
+                f"'{current_status.value}' to "
+                f"'{new_status.value}'."
+            ),
+        )
     )
 
     return requests_collection.find_one(
-        {"id": request_id},
-        {"_id": 0}
+        {"id": request_id}
     )
 
 
-# --------------------------------------------------
-# Delete a service request
+# ---------------------------------------------------------
 # DELETE /requests/{request_id}
-# --------------------------------------------------
+# Delete a service request
+# ---------------------------------------------------------
 
 @router.delete(
     "/{request_id}",
-    status_code=status.HTTP_204_NO_CONTENT
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_request(
     request_id: str,
@@ -390,9 +509,7 @@ def delete_request(
         get_service_requests_collection
     ),
 ):
-    """
-    Delete a service request by its ID.
-    """
+    """Delete a service request."""
 
     result = requests_collection.delete_one(
         {"id": request_id}
@@ -401,7 +518,7 @@ def delete_request(
     if result.deleted_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service request not found."
+            detail="Service request not found",
         )
 
     return None

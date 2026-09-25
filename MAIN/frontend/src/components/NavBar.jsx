@@ -9,7 +9,7 @@ export default function NavBar() {
       <span className="navbar-brand fw-bold">COLLEGE SERVICE REQUEST APP</span>
       <div className="navbar-nav">
         {[
-          ['/tickets', 'Service Request'],
+          ['/requests', 'Service Request'],
           ['/users', 'Users'],
           ['/categories', 'Service Categories'],
           ['/audit-logs', 'Audit Logs'],

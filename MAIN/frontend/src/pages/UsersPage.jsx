@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { getUsers, createUser, deleteUser } from '../api/client'
 
-const ROLES = ['Student', 'Faculty', 'Service_staff','Department/Service_lead', 'admin']
+const ROLES = ['student', 'faculty', 'service_staff','service_lead', 'admin']
 
 const blank = { name: '', email: '', password: '', role: 'Student' }
 

@@ -11,6 +11,7 @@ from app.routers import categories
 from app.routers import requests
 from app.routers import comments
 from app.routers import attachments
+from app.routers import audit_logs
 
 # Create the FastAPI app instance
 app = FastAPI(title=settings.APP_NAME)
@@ -21,6 +22,7 @@ app.include_router(categories.router)
 app.include_router(requests.router)
 app.include_router(comments.router)
 app.include_router(attachments.router)
+app.include_router(audit_logs.router)
 
 # Check the database connection when the server starts
 @app.on_event("startup")

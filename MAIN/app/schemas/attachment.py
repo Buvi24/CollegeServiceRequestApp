@@ -5,7 +5,7 @@
 #   As planned, this only stores FILE METADATA (filename, a URL pointing to
 #   where the file actually lives, and its size) — there is no real file
 #   upload/storage engine here, to keep this project simple.
-#   An attachment always belongs to exactly one ticket (ticket_id comes from
+#   An attachment always belongs to exactly one request (request_id comes from
 #   the URL path — see app/routers/attachments.py).
 #
 # Concepts demonstrated here:
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 
 class AttachmentCreate(BaseModel):
-    """Data required from the client when attaching a file to a ticket."""
+    """Data required from the client when attaching a file to a request."""
 
     uploaded_by: str = Field(..., description="id of the User who uploaded this file")
     filename: str = Field(..., min_length=1, max_length=255, description="Original file name, e.g. 'screenshot.png'")
@@ -41,7 +41,7 @@ class AttachmentResponse(BaseModel):
     """Shape of an attachment as returned by the API."""
 
     id: str
-    ticket_id: str
+    request_id: str
     uploaded_by: str
     filename: str
     url: HttpUrl

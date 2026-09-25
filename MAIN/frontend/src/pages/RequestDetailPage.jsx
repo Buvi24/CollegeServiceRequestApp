@@ -1,18 +1,18 @@
-// src/pages/TicketDetailPage.jsx
-// Detail view for a single ticket. Shows ticket info, and lets you:
+// src/pages/requestDetailPage.jsx
+// Detail view for a single request. Shows request info, and lets you:
 //   - Assign a technician (assigned_to + assigned_by)
 //   - Change status (new status + changed_by)
 //   - Add / delete comments
 //   - Add / delete attachments (metadata only)
-//   - View the ticket's audit log
+//   - View the request's audit log
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  getTicket, getUsers,
-  assignTicket, updateTicketStatus,
+  getrequest, getUsers,
+  assignrequest, updaterequestStatus,
   getComments, createComment, deleteComment,
   getAttachments, createAttachment, deleteAttachment,
-  getTicketAuditLogs,
+  getrequestAuditLogs,
 } from '../api/client'
 
 const NEXT_STATUSES = {
@@ -29,11 +29,11 @@ const STATUS_COLORS = {
   on_hold: 'warning', resolved: 'success', closed: 'dark',
 }
 
-export default function TicketDetailPage() {
-  const { ticketId } = useParams()
+export default function requestDetailPage() {
+  const { requestId } = useParams()
   const navigate = useNavigate()
 
-  const [ticket, setTicket] = useState(null)
+  const [request, setrequest] = useState(null)
   const [users, setUsers] = useState([])
   const [comments, setComments] = useState([])
   const [attachments, setAttachments] = useState([])
@@ -56,16 +56,16 @@ export default function TicketDetailPage() {
   const [attForm, setAttForm] = useState({ filename: '', url: '', size: '', uploaded_by: '' })
 
   const loadAll = () => {
-    getTicket(ticketId).then(setTicket).catch(() => navigate('/tickets'))
-    getComments(ticketId).then(setComments).catch(() => {})
-    getAttachments(ticketId).then(setAttachments).catch(() => {})
-    getTicketAuditLogs(ticketId).then(setAuditLogs).catch(() => {})
+    getrequest(requestId).then(setrequest).catch(() => navigate('/requests'))
+    getComments(requestId).then(setComments).catch(() => {})
+    getAttachments(requestId).then(setAttachments).catch(() => {})
+    getrequestAuditLogs(requestId).then(setAuditLogs).catch(() => {})
   }
 
   useEffect(() => {
     loadAll()
     getUsers().then(setUsers).catch(() => {})
-  }, [ticketId])
+  }, [requestId])
 
   const withError = (fn) => async (...args) => {
     setError('')
@@ -74,64 +74,64 @@ export default function TicketDetailPage() {
 
   const handleAssign = withError(async (e) => {
     e.preventDefault()
-    await assignTicket(ticketId, { assigned_to: assignTo, assigned_by: assignBy })
+    await assignrequest(requestId, { assigned_to: assignTo, assigned_by: assignBy })
     setAssignTo(''); setAssignBy('')
   })
 
   const handleStatus = withError(async (e) => {
     e.preventDefault()
-    await updateTicketStatus(ticketId, { status: newStatus, changed_by: changedBy })
+    await updaterequestStatus(requestId, { status: newStatus, changed_by: changedBy })
     setNewStatus(''); setChangedBy('')
   })
 
   const handleComment = withError(async (e) => {
     e.preventDefault()
-    await createComment(ticketId, { author_id: commentAuthor, content: commentContent })
+    await createComment(requestId, { author_id: commentAuthor, content: commentContent })
     setCommentContent(''); setCommentAuthor('')
   })
 
   const handleDeleteComment = withError(async (commentId) => {
     if (!confirm('Delete comment?')) return
-    await deleteComment(ticketId, commentId)
+    await deleteComment(requestId, commentId)
   })
 
   const handleAttachment = withError(async (e) => {
     e.preventDefault()
-    await createAttachment(ticketId, { ...attForm, size: parseInt(attForm.size, 10) })
+    await createAttachment(requestId, { ...attForm, size: parseInt(attForm.size, 10) })
     setAttForm({ filename: '', url: '', size: '', uploaded_by: '' })
   })
 
   const handleDeleteAttachment = withError(async (attachmentId) => {
     if (!confirm('Delete attachment?')) return
-    await deleteAttachment(ticketId, attachmentId)
+    await deleteAttachment(requestId, attachmentId)
   })
 
-  if (!ticket) return <p>Loading…</p>
+  if (!request) return <p>Loading…</p>
 
-  const nextStatuses = NEXT_STATUSES[ticket.status] || []
+  const nextStatuses = NEXT_STATUSES[request.status] || []
 
   return (
     <div>
-      <button className="btn btn-sm btn-outline-secondary mb-3" onClick={() => navigate('/tickets')}>
-        ← Back to Tickets
+      <button className="btn btn-sm btn-outline-secondary mb-3" onClick={() => navigate('/requests')}>
+        ← Back to requests
       </button>
 
       {error && <div className="alert alert-danger py-2">{error}</div>}
 
-      {/* Ticket header */}
+      {/* request header */}
       <div className="card mb-3">
         <div className="card-body">
-          <h5 className="card-title">{ticket.title}</h5>
-          <p className="card-text text-muted">{ticket.description}</p>
-          <span className={`badge bg-${STATUS_COLORS[ticket.status] || 'secondary'} me-2`}>{ticket.status}</span>
+          <h5 className="card-title">{request.title}</h5>
+          <p className="card-text text-muted">{request.description}</p>
+          <span className={`badge bg-${STATUS_COLORS[request.status] || 'secondary'} me-2`}>{request.status}</span>
           <small className="text-muted">
-            Created: {new Date(ticket.created_at).toLocaleString()} &nbsp;|&nbsp;
-            Updated: {new Date(ticket.updated_at).toLocaleString()}
+            Created: {new Date(request.created_at).toLocaleString()} &nbsp;|&nbsp;
+            Updated: {new Date(request.updated_at).toLocaleString()}
           </small>
           <br />
           <small className="text-muted">
-            Assigned to: {ticket.assigned_to
-              ? (users.find(u => u.id === ticket.assigned_to)?.name || ticket.assigned_to)
+            Assigned to: {request.assigned_to
+              ? (users.find(u => u.id === request.assigned_to)?.name || request.assigned_to)
               : <em>unassigned</em>}
           </small>
         </div>
@@ -172,7 +172,7 @@ export default function TicketDetailPage() {
             <div className="card-header">Change Status</div>
             <div className="card-body">
               {nextStatuses.length === 0
-                ? <p className="text-muted mb-0">Ticket is <strong>{ticket.status}</strong> — no further transitions.</p>
+                ? <p className="text-muted mb-0">request is <strong>{request.status}</strong> — no further transitions.</p>
                 : (
                   <form onSubmit={handleStatus} className="row g-2">
                     <div className="col-6">
@@ -277,7 +277,7 @@ export default function TicketDetailPage() {
           </div>
         </div>
 
-        {/* Audit log for this ticket */}
+        {/* Audit log for this request */}
         <div className="col-12">
           <div className="card">
             <div className="card-header">Audit Log</div>

@@ -1,15 +1,15 @@
-# app/models/ticket.py
+# app/models/request.py
 #
 # Purpose:
-#   Describes the shape of a "ticket" document as stored in MongoDB, and
-#   defines the ticket lifecycle rules (which status can move to which).
+#   Describes the shape of a "request" document as stored in MongoDB, and
+#   defines the request lifecycle rules (which status can move to which).
 #
 # Lifecycle (from the requirements):
 #   NEW -> ASSIGNED -> IN_PROGRESS -> RESOLVED -> CLOSED
 #   Plus the branch:
 #   IN_PROGRESS -> ON_HOLD -> IN_PROGRESS
 #
-# A ticket document in MongoDB looks like this:
+# A request document in MongoDB looks like this:
 #   {
 #       "id": "「uuid4 string」",
 #       "title": "Laptop won't turn on",
